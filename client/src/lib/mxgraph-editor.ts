@@ -54,14 +54,14 @@ export function initMxGraph(container: HTMLElement): MxGraphEditor {
 
   const graph = new mx.mxGraph(container);
 
-  graph.setConnectable(false);
+  graph.setConnectable(true);
   graph.setAllowDanglingEdges(false);
   graph.setDisconnectOnMove(false);
   graph.setCellsResizable(true);
   graph.setCellsMovable(true);
   graph.setCellsEditable(true);
-  graph.setCellsDeletable(false);
-  graph.setDropEnabled(false);
+  graph.setCellsDeletable(true);
+  graph.setDropEnabled(true);
   graph.setPanning(true);
   graph.panningHandler.useLeftButtonForPanning = true;
 
@@ -495,7 +495,7 @@ function calculateLayout(
 }
 
 export function extractModelFromGraph(editor: MxGraphEditor): DiagramModel {
-  const { graph } = editor;
+  const { graph, cellNodeMap, nodeCellMap } = editor;
   const parent = graph.getDefaultParent();
   
   const nodes: DiagramNode[] = [];
@@ -506,10 +506,10 @@ export function extractModelFromGraph(editor: MxGraphEditor): DiagramModel {
   for (const cell of cells) {
     if (cell.isVertex()) {
       const nodeData = cell.nodeData as DiagramNode | undefined;
+      const geo = cell.getGeometry();
+      const currentLabel = typeof cell.value === 'string' ? cell.value : (nodeData?.label || 'Label');
+      
       if (nodeData) {
-        const geo = cell.getGeometry();
-        const currentLabel = typeof cell.value === 'string' ? cell.value : nodeData.label;
-        
         const updatedNode: DiagramNode = {
           ...nodeData,
           label: currentLabel,
@@ -524,19 +524,47 @@ export function extractModelFromGraph(editor: MxGraphEditor): DiagramModel {
         }
         
         cell.nodeData = updatedNode;
-        
         nodes.push(updatedNode);
+      } else {
+        const newNode: DiagramNode = {
+          id: cell.id || `auto_${++shapeIdCounter}`,
+          type: 'simpleAttribute',
+          label: currentLabel,
+          name: currentLabel,
+          x: geo.x,
+          y: geo.y,
+          width: geo.width,
+          height: geo.height,
+        };
+        cell.nodeData = newNode;
+        cellNodeMap.set(newNode.id, cell);
+        nodeCellMap.set(cell, newNode.id);
+        nodes.push(newNode);
       }
     } else if (cell.isEdge()) {
       const edgeData = cell.edgeData as DiagramEdge | undefined;
-      if (edgeData) {
-        const updatedEdge: DiagramEdge = {
-          ...edgeData,
-          sourceId: cell.source?.id || edgeData.sourceId,
-          targetId: cell.target?.id || edgeData.targetId,
-        };
-        cell.edgeData = updatedEdge;
-        edges.push(updatedEdge);
+      const sourceId = cell.source?.id || edgeData?.sourceId || '';
+      const targetId = cell.target?.id || edgeData?.targetId || '';
+      
+      if (sourceId && targetId) {
+        if (edgeData) {
+          const updatedEdge: DiagramEdge = {
+            ...edgeData,
+            sourceId,
+            targetId,
+          };
+          cell.edgeData = updatedEdge;
+          edges.push(updatedEdge);
+        } else {
+          const newEdge: DiagramEdge = {
+            id: cell.id || `edge_auto_${++shapeIdCounter}`,
+            sourceId,
+            targetId,
+            label: typeof cell.value === 'string' ? cell.value : undefined,
+          };
+          cell.edgeData = newEdge;
+          edges.push(newEdge);
+        }
       }
     }
   }
@@ -626,4 +654,257 @@ export function exportToPNG(editor: MxGraphEditor, callback: (dataUrl: string) =
     URL.revokeObjectURL(url);
   };
   img.src = url;
+}
+
+let shapeIdCounter = 0;
+
+function generateShapeId(): string {
+  return `shape_${++shapeIdCounter}`;
+}
+
+export interface ShapeConfig {
+  type: 'entity' | 'weakEntity' | 'simpleAttribute' | 'pkAttribute' | 'fkAttribute' | 'multivaluedAttribute' | 'derivedAttribute' | 'compositeAttribute' | 'relationship' | 'identifyingRelationship' | 'text';
+  label: string;
+  x: number;
+  y: number;
+  width?: number;
+  height?: number;
+  fontSize?: number;
+  fontColor?: string;
+}
+
+export function addShape(editor: MxGraphEditor, config: ShapeConfig): any {
+  const { graph, cellNodeMap, nodeCellMap } = editor;
+  const parent = graph.getDefaultParent();
+  
+  let width = config.width;
+  let height = config.height;
+  let style = config.type;
+  
+  if (config.type === 'entity' || config.type === 'weakEntity') {
+    width = width || ENTITY_WIDTH;
+    height = height || ENTITY_HEIGHT;
+  } else if (config.type.includes('Attribute') || config.type === 'pkAttribute' || config.type === 'fkAttribute') {
+    width = width || ATTRIBUTE_WIDTH;
+    height = height || ATTRIBUTE_HEIGHT;
+    if (config.type === 'pkAttribute') {
+      style = 'pkAttribute';
+    } else if (config.type === 'fkAttribute') {
+      style = 'fkAttribute';
+    }
+  } else if (config.type === 'relationship' || config.type === 'identifyingRelationship') {
+    width = width || RELATIONSHIP_WIDTH;
+    height = height || RELATIONSHIP_HEIGHT;
+  } else if (config.type === 'text') {
+    width = width || 150;
+    height = height || 30;
+  }
+  
+  graph.getModel().beginUpdate();
+  try {
+    const nodeId = generateShapeId();
+    let cellStyle: string = style;
+    
+    if (config.type === 'text') {
+      const fontSize = config.fontSize || 14;
+      const fontColor = config.fontColor || '#333333';
+      cellStyle = `text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=${fontSize};fontColor=${fontColor};`;
+    }
+    
+    const cell = graph.insertVertex(
+      parent,
+      nodeId,
+      config.label,
+      config.x,
+      config.y,
+      width,
+      height,
+      cellStyle
+    );
+    
+    let nodeType: DiagramNode['type'];
+    switch (config.type) {
+      case 'entity':
+        nodeType = 'entity';
+        break;
+      case 'weakEntity':
+        nodeType = 'weakEntity';
+        break;
+      case 'simpleAttribute':
+        nodeType = 'simpleAttribute';
+        break;
+      case 'pkAttribute':
+        nodeType = 'simpleAttribute';
+        break;
+      case 'fkAttribute':
+        nodeType = 'simpleAttribute';
+        break;
+      case 'multivaluedAttribute':
+        nodeType = 'multivaluedAttribute';
+        break;
+      case 'derivedAttribute':
+        nodeType = 'derivedAttribute';
+        break;
+      case 'compositeAttribute':
+        nodeType = 'compositeAttribute';
+        break;
+      case 'relationship':
+        nodeType = 'relationship';
+        break;
+      case 'identifyingRelationship':
+        nodeType = 'identifyingRelationship';
+        break;
+      case 'text':
+        nodeType = 'simpleAttribute';
+        break;
+      default:
+        nodeType = 'simpleAttribute';
+    }
+    
+    const nodeData: DiagramNode = {
+      id: nodeId,
+      type: nodeType,
+      label: config.label,
+      name: config.label,
+      isPrimaryKey: config.type === 'pkAttribute',
+      isForeignKey: config.type === 'fkAttribute',
+      x: config.x,
+      y: config.y,
+      width: width,
+      height: height,
+    };
+    
+    if (config.type === 'entity' || config.type === 'weakEntity') {
+      nodeData.entityType = config.type === 'weakEntity' ? 'weak' : 'strong';
+    }
+    
+    if (config.type === 'relationship' || config.type === 'identifyingRelationship') {
+      nodeData.relationshipType = config.type === 'identifyingRelationship' ? 'identifying' : 'normal';
+    }
+    
+    cell.nodeData = nodeData;
+    cellNodeMap.set(nodeId, cell);
+    nodeCellMap.set(cell, nodeId);
+    
+    if (!editor.originalModel) {
+      editor.originalModel = { nodes: [], edges: [] };
+    }
+    editor.originalModel.nodes.push(nodeData);
+    
+    if (editor.onModelChange) {
+      editor.onModelChange(extractModelFromGraph(editor));
+    }
+    
+    return cell;
+  } finally {
+    graph.getModel().endUpdate();
+  }
+}
+
+export function addConnection(editor: MxGraphEditor, sourceCell: any, targetCell: any, label?: string): any {
+  if (!sourceCell || !targetCell) {
+    return null;
+  }
+  
+  const { graph } = editor;
+  const parent = graph.getDefaultParent();
+  
+  graph.getModel().beginUpdate();
+  try {
+    const edgeId = `edge_${++shapeIdCounter}`;
+    const edge = graph.insertEdge(
+      parent,
+      edgeId,
+      label || '',
+      sourceCell,
+      targetCell,
+      'attributeEdge'
+    );
+    
+    const edgeData: DiagramEdge = {
+      id: edgeId,
+      sourceId: sourceCell.id,
+      targetId: targetCell.id,
+      label: label,
+    };
+    
+    edge.edgeData = edgeData;
+    
+    if (!editor.originalModel) {
+      editor.originalModel = { nodes: [], edges: [] };
+    }
+    editor.originalModel.edges.push(edgeData);
+    
+    if (editor.onModelChange) {
+      editor.onModelChange(extractModelFromGraph(editor));
+    }
+    
+    return edge;
+  } finally {
+    graph.getModel().endUpdate();
+  }
+}
+
+export function setConnectionMode(editor: MxGraphEditor, enabled: boolean): void {
+  const { graph } = editor;
+  graph.setConnectable(enabled);
+  if (enabled) {
+    graph.panningHandler.useLeftButtonForPanning = false;
+  } else {
+    graph.panningHandler.useLeftButtonForPanning = true;
+  }
+}
+
+export function updateTextStyle(editor: MxGraphEditor, cell: any, fontSize?: number, fontColor?: string): void {
+  const { graph } = editor;
+  const mx = window;
+  const mxConstants = mx.mxConstants;
+  
+  graph.getModel().beginUpdate();
+  try {
+    const currentStyle = graph.getCellStyle(cell);
+    let newStyle = graph.getModel().getStyle(cell) || '';
+    
+    if (fontSize !== undefined) {
+      newStyle = newStyle.replace(/fontSize=\d+;?/g, '');
+      newStyle += `fontSize=${fontSize};`;
+    }
+    
+    if (fontColor !== undefined) {
+      newStyle = newStyle.replace(/fontColor=[^;]+;?/g, '');
+      newStyle += `fontColor=${fontColor};`;
+    }
+    
+    graph.getModel().setStyle(cell, newStyle);
+  } finally {
+    graph.getModel().endUpdate();
+  }
+}
+
+export function deleteSelected(editor: MxGraphEditor): void {
+  const { graph } = editor;
+  const cells = graph.getSelectionCells();
+  if (cells.length > 0) {
+    graph.removeCells(cells);
+  }
+}
+
+export function clearCanvas(editor: MxGraphEditor): void {
+  const { graph, cellNodeMap, nodeCellMap } = editor;
+  const parent = graph.getDefaultParent();
+  
+  graph.getModel().beginUpdate();
+  try {
+    graph.removeCells(graph.getChildCells(parent, true, true));
+    cellNodeMap.clear();
+    nodeCellMap.clear();
+    editor.originalModel = null;
+  } finally {
+    graph.getModel().endUpdate();
+  }
+}
+
+export function getSelectedCell(editor: MxGraphEditor): any {
+  const cells = editor.graph.getSelectionCells();
+  return cells.length > 0 ? cells[0] : null;
 }
