@@ -1,0 +1,516 @@
+You are an expert full-stack engineer.  
+Build for me a complete, working ERD Engine web application based on the following specification and documentation.
+
+I want:
+
+- A **single-page web app** that:
+  - Accepts ERD DSL text input (according to the formal grammar below).
+  - Parses the DSL into an AST (according to the EBNF).
+  - Transforms the AST into a Diagram Model (nodes & edges).
+  - Renders the ERD as an **interactive diagram** using **mxGraph** (draw.io-like behavior).
+  - Allows **drag-and-drop**, **resize**, **inline label editing**, **connecting entities/relationships**, and **editing properties**.
+  - Supports **export**:
+    - DSL (regenerated from the edited canvas, at least for entities and relationships).
+    - JSON Diagram Model.
+    - SVG or PNG (via mxGraph export utilities if possible).
+
+Use **plain HTML/CSS/JavaScript** (no heavy frameworks like React). You may use ES modules and structure code into multiple JS files in a `src/` folder.
+
+### 1. Project Structure
+
+Create a clean project layout like:
+
+- `index.html` — main UI, includes text area for DSL, buttons, and mxGraph canvas.
+- `styles.css` — basic styling (simple, developer-friendly, no need for fancy design).
+- `src/dslParser.js` — implements the DSL parser (recursive descent or similar).
+- `src/astModel.js` — defines AST structures (entities, attributes, relationships).
+- `src/diagramModel.js` — converts AST → Diagram Model (nodes and edges with types).
+- `src/editor.js` — sets up mxGraph, renders nodes & edges, and manages interaction.
+- `src/sync.js` — handles synchronization between canvas and DSL/JSON export.
+- `src/sampleData.js` — contains the example DSL from the spec to test the app.
+
+Use modular, well-commented JavaScript and keep concerns separated.
+
+### 2. Include mxGraph
+
+Include **mxGraph** from a CDN inside `index.html` like this (or a similar stable URL):
+
+```html
+<script type="text/javascript" src="https://unpkg.com/mxgraph@4.2.2/javascript/mxClient.min.js"></script>
+Then initialize an mxGraph instance in editor.js, attach it to a div#graphContainer, and enable:
+
+panning
+
+zoom
+
+rubberband selection
+
+drag and drop
+
+resize handles
+
+inline label editing
+
+3. Use the Following DSL Specification (Copy Exactly)
+This is the official DSL definition and documentation. Your implementation MUST follow this exactly.
+
+ERD Engine DSL – Language & Grammar Report
+
+Introduction
+This document presents a custom Domain-Specific Language (DSL) designed to describe Entity–Relationship Diagrams (ERDs) in a human-readable yet formally structured format.
+The language enables defining entities, weak entities, attributes of all types, and relationships with detailed cardinality and participation constraints.
+It is optimized for use in an ERD Engine capable of parsing, validating, and generating diagrams or database schemas.
+
+DSL Syntax Overview
+The DSL supports the following core constructs:
+• Entities (Strong / Weak)
+• Attributes:
+o Simple
+o Primary / Foreign Keys
+o Composite
+o Multivalued
+o Derived
+o Typed attributes
+• Relationships:
+o 1–1, 1–M, M–M
+o Optional/Total participation
+o Identifying relationships for weak entities
+o Relationship attributes
+
+The syntax is designed to remain close to natural language while maintaining strict structure for parsing.
+
+EBNF Grammar Definition
+
+3.1 Top-Level
+
+ERD = { (EntityDef | WeakEntityDef | RelationDef | IdentifyingRelationDef) } ;
+
+3.2 Entity Definitions
+
+Strong Entity
+EntityDef = "Entity" Identifier ":" AttributeList ;
+
+Weak Entity
+WeakEntityDef = "Weak" "Entity" Identifier ":" AttributeList
+"Identified" "By" Identifier "." Identifier { "+" Identifier "." Identifier } ;
+
+3.3 Attribute Definitions
+
+AttributeList = { Attribute } ;
+
+Attribute = SimpleAttr
+| CompositeAttr
+| MultivaluedAttr
+| DerivedAttr
+| TypedAttr ;
+
+Simple Attribute
+SimpleAttr = Identifier ["PK" | "FK" "->" FkTarget] ;
+
+Composite Attribute
+CompositeAttr = Identifier "Composite" ":" AttributeList ;
+
+Multivalued Attribute
+MultivaluedAttr = Identifier "Multivalued" ;
+
+Derived Attribute
+DerivedAttr = Identifier "Derived" ;
+
+Typed Attribute
+TypedAttr = Identifier ":" Type ;
+
+Type = Identifier ;
+
+3.4 Foreign Key Target
+
+FkTarget = Identifier "." Identifier ;
+
+3.5 Relationships
+
+Standard Relationship
+RelationDef = "Relation" Identifier "(" Cardinality ["," Participation] ")"
+"—"
+"(" Cardinality ["," Participation] ")" Identifier ":"
+Identifier
+[AttributeList] ;
+
+Identifying Relationship
+IdentifyingRelationDef = "Identifying" "Relation"
+Identifier "(" Cardinality ")"
+"—"
+"(" Cardinality ")" Identifier ":"
+Identifier ;
+
+3.6 Cardinality & Participation
+
+Cardinality = "1" | "M" ;
+Participation = "total" | "partial" ;
+
+3.7 Identifiers
+
+Identifier = Letter { Letter | Digit | "_" } ;
+Letter = "a"…"z" | "A"…"Z" ;
+Digit = "0"…"9" ;
+
+Full Example Written in the DSL
+
+Entity Store:
+store_id PK
+name
+address Composite:
+street
+city
+zip
+phones Multivalued
+
+Entity Product:
+product_id PK
+name
+price
+
+Weak Entity OrderItem:
+quantity
+price
+Identified By Order.order_id + Product.product_id
+
+Entity Order:
+order_id PK
+order_date
+total Derived
+
+Relation Store (1) — (M) Product: sells
+
+Identifying Relation Order (1) — (M) OrderItem: contains
+
+Relation Product (M, partial) — (M, partial) Supplier: supplies
+supply_date
+cost
+
+Chapter 2: Diagram Generation Model for the ERD Engine
+
+2.1 Introduction
+This chapter describes the internal mechanism through which the ERD Engine transforms the Domain-Specific Language (DSL) syntax into a complete graphical Entity–Relationship Diagram (ERD). While Chapter 1 defined the DSL grammar and its expressive capabilities, this chapter focuses on the rendering pipeline—starting from parsing the textual model, through semantic processing, and ending with automated diagram generation using standardized ER shapes (entities, relationships, attributes, and cardinality symbols).
+
+2.2 The Three-Stage Rendering Pipeline
+
+Stage 1 — Parsing and AST Construction (DSL → Internal Model)
+After reading the DSL file, the grammar rules defined in Chapter 1 are applied to build an Abstract Syntax Tree (AST) or a structured semantic model. This internal model contains fully resolved objects representing:
+• Entities (strong / weak)
+• Attributes (simple, composite, multivalued, derived)
+• Keys (PK / FK)
+• Relationships (normal / identifying)
+• Participation and cardinality constraints
+• Relationship attributes
+
+Example output of this stage is a structured JSON model with node types, attributes, and relationships fully resolved.
+
+Stage 2 — Diagram Model Construction (Model → Nodes & Edges)
+In this stage, the AST is transformed into a set of diagram nodes and diagram edges.
+
+Each element in the DSL maps to a specific visual type:
+
+DSL Construct → Diagram Shape
+Strong Entity → Single rectangle
+Weak Entity → Double rectangle
+Simple Attribute → Single ellipse
+Multivalued Attribute → Double ellipse
+Derived Attribute → Dashed ellipse
+Composite Attribute → Parent ellipse linked to sub-ellipses
+Relationship → Single diamond
+Identifying Relationship → Double diamond
+PK attribute → Underline or bold
+FK attribute → Tagged with reference
+Cardinalities → Crow’s foot notation (1, M, optional, mandatory)
+
+Stage 3 — Rendering and Layout (Nodes & Edges → Final Diagram)
+The final step converts diagram nodes and edges into a visual diagram.
+The engine may use one of the following rendering backends:
+
+Graphviz (DOT → SVG/PNG)
+
+MermaidJS (web rendering)
+
+Custom SVG / Canvas Renderer
+
+In this implementation, we will use mxGraph as the rendering and interaction backend instead of Graphviz/Mermaid.
+
+Chapter 3: Interactive ERD Editing Engine (Draw.io-like UI Layer)
+
+3.1 Introduction
+This chapter extends the engine to support full interactive diagram editing, similar to draw.io. The Interactive Editing Engine provides users with a canvas where they can manipulate ERD elements visually using drag-and-drop, resize handles, inline text editing, and dynamic connectors.
+
+3.2 Architecture Overview
+
+To support interactive editing, the ERD Engine introduces four architectural layers:
+
+Layer 1 — Canvas Model (Editable Diagram State)
+A dynamic model that stores layout, size, colors, fonts, and visual metadata for each node and edge.
+
+Example:
+
+{
+"id": "Store",
+"type": "entity",
+"graphics": {
+"x": 230,
+"y": 410,
+"width": 180,
+"height": 90,
+"fontSize": 14,
+"fontFamily": "Arial",
+"borderStyle": "single",
+"isLocked": false
+}
+}
+
+Layer 2 — Interaction Layer (Event Processing Engine)
+Manages:
+
+Drag & drop
+
+Resize
+
+Text editing
+
+Connector creation
+
+Attribute insertion or deletion
+
+Changing relationship cardinality
+
+Selection / multi-selection
+
+Undo / redo
+
+Provide callbacks such as:
+
+onDragStart(node)
+onDragMove(node, newPosition)
+onDragEnd(node)
+onResize(node, newSize)
+onEditText(node, newText)
+onConnect(source, target)
+onDelete(element)
+
+Layer 3 — Editor UI Layer
+Includes:
+
+Sidebar tool palette
+
+Canvas
+
+Inspector panel
+
+Toolbar (undo/redo, zoom, export, alignment)
+
+Attribute editor widget
+
+Relationship cardinality editor
+
+Layer 4 — Sync Layer (Model ↔ UI ↔ DSL)
+Maintains consistency between DSL, AST, Diagram Model, Canvas Model, and the UI state.
+Supports export to:
+
+DSL
+
+JSON Diagram Model
+
+SVG
+
+PNG
+
+3.3 Adoption of MxGraph as the Core Interaction Framework
+
+Use MxGraph to:
+
+Render nodes (entities, attributes, relationships)
+
+Render edges with cardinalities
+
+Provide drag-and-drop and resize handles
+
+Enable inline text editing
+
+Support attribute grouping inside composite attributes
+
+Auto-route connectors
+
+Provide alignment and snapping features
+
+Custom shapes required:
+
+single rectangle → strong entity
+
+double rectangle → weak entity
+
+ellipse → simple attribute
+
+double ellipse → multivalued attribute
+
+dashed ellipse → derived attribute
+
+diamond → relationship
+
+double diamond → identifying relationship
+
+Register example shapes:
+
+mxCellRenderer.registerShape('weakEntity', WeakEntityShape);
+mxCellRenderer.registerShape('doubleEllipse', MultivaluedAttributeShape);
+mxCellRenderer.registerShape('doubleDiamond', IdentifyingRelationShape);
+
+3.4 Canvas Model Extensions for Editing
+
+Each diagram element supports:
+
+position (x, y)
+
+size (width, height)
+
+font (family, size, weight)
+
+border (single/double/dashed)
+
+color (fill, border, text)
+
+lock status
+
+z-index
+
+attribute grouping (attach/detach sub-attributes)
+
+3.5 Interaction Events and Editing Mechanics
+
+Movement & resizing with drag handles, snapping, alignment guides
+
+Inline text editing by double-clicking labels
+
+Dynamic connectors & routing
+
+Attribute & relationship editing (add/delete/convert composite, mark PK/FK)
+
+3.6 Undo/Redo System
+
+Use mxUndoManager to support Ctrl+Z / Ctrl+Y.
+
+3.7 Tool Palette & Inspector Panel
+
+Tool palette templates:
+
+Entity
+
+Weak Entity
+
+Attribute
+
+Multivalued Attribute
+
+Composite Attribute
+
+Derived Attribute
+
+Relationship (1–1, 1–M, M–M)
+
+Identifying Relationship
+
+Inspector panel to edit:
+
+colors
+
+fonts
+
+border style
+
+participation constraints
+
+relationship cardinality
+
+PK/FK marking
+
+3.8 Synchronization Back to DSL
+
+When the user edits the canvas:
+
+Update Canvas Model
+
+Update Diagram Model
+
+Reflect changes in AST
+
+Regenerate DSL on export
+
+You do NOT have to support 100% perfect reverse-mapping for every exotic case, but you MUST at least:
+
+Re-generate entity and relationship blocks in valid DSL syntax.
+
+Preserve names and cardinalities.
+
+3.9 Export Options
+
+Implement buttons in the UI to export:
+
+JSON (Diagram + Canvas Model)
+
+DSL text (regenerated)
+
+If possible, also offer:
+
+SVG / PNG via mxGraph utilities.
+
+4. UI Requirements
+In index.html build:
+
+Left side:
+
+<textarea id="dslInput"> pre-filled with the example DSL.
+
+Buttons:
+
+"Parse & Generate Diagram"
+
+"Export DSL"
+
+"Export JSON"
+
+"Export SVG/PNG" (if you can)
+
+Right side:
+
+<div id="graphContainer"> as mxGraph canvas.
+
+Also optionally:
+
+A bottom panel or side panel for "Inspector" to show properties of the selected node.
+
+5. Implementation Notes
+Implement a simple tokenizer + parser in src/dslParser.js according to the EBNF.
+
+Define AST node types in src/astModel.js (e.g., EntityNode, WeakEntityNode, AttributeNode, RelationshipNode).
+
+In src/diagramModel.js, map AST nodes to a neutral diagram representation (array of nodes and edges with types and logical properties).
+
+In src/editor.js, map diagram nodes/edges to mxGraph cells and apply shapes/styles according to type:
+
+strong entity: single rectangle
+
+weak entity: double border rectangle
+
+simple attribute: ellipse
+
+multivalued: double border ellipse
+
+derived: dashed ellipse
+
+relationship: diamond / double diamond
+
+Make the code clean, modular, and well-commented so I can extend it later.
+
+Finally, after you generate the code, briefly explain:
+
+How to run the project on Replit.
+
+Where to edit the DSL input.
+
+How the parsing → AST → diagram flow works.
+
+How to extend shapes or mappings later.
